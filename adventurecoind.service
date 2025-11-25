@@ -1,0 +1,22 @@
+[Unit]
+Description=Raven's distributed currency daemon
+After=network.target
+
+[Service]
+User=adventurecoin
+Group=adventurecoin
+
+Type=forking
+PIDFile=/var/lib/adventurecoind/adventurecoind.pid
+ExecStart=/usr/bin/adventurecoind -daemon -pid=/var/lib/adventurecoind/adventurecoind.pid \
+-conf=/etc/adventurecoin/adventurecoin.conf -datadir=/var/lib/adventurecoind -disablewallet
+
+Restart=always
+PrivateTmp=true
+TimeoutStopSec=60s
+TimeoutStartSec=2s
+StartLimitInterval=120s
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
