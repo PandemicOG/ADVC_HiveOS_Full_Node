@@ -2,37 +2,23 @@
 
 sleep 1
 
-#### COLOR SCRIPT
+#### COLOR OUTPUT ####
 cecho(){
     RED="\033[0;31m"
     GREEN="\033[0;32m"
     YELLOW="\033[1;33m"
     CYAN="\033[1;36m"
-    PURPLE="\033[0;35m"
-    WHITE="\033[0;37m"
     NC="\033[0m"
-
-    printf "${!1}${2} ${NC}\n"
+    printf "${!1}${2}${NC}\n"
 }
-#### END COLOR SCRIPT
 
-
-cecho "YELLOW" "     AdventureCoin Full Node Auto-Installer"
-cecho "YELLOW" "     (Adapted from the Ravenpool installer)"
-sleep 2
-
-### REQUIRE unzip ###
-if ! command -v unzip >/dev/null 2>&1; then
-    cecho "YELLOW" "Installing unzip..."
-    apt-get update -y
-    apt-get install -y unzip
-fi
-
+cecho "YELLOW" "AdventureCoin Full Node Auto-Installer (HiveOS Edition)"
+sleep 1
 
 ### DISK CHECK ###
 cecho "YELLOW" "Checking available disk space..."
 reqSpace=38000000
-availSpace=$(df "$HOME" | awk 'NR==2 { print $4 }')
+availSpace=$(df "$HOME" | awk 'NR==2 {print $4}')
 
 if (( availSpace < reqSpace )); then
     cecho "RED" "Not enough disk space. Exiting..."
@@ -40,93 +26,104 @@ if (( availSpace < reqSpace )); then
 fi
 
 cecho "GREEN" "Disk space OK. Continuing..."
-sleep 2
-
-### CREATE ADVENTURECOIN USER ###
-cecho "YELLOW" "Creating adventurecoin user..."
 sleep 1
-adduser adventurecoin --system --group || true
+
+### DEPENDENCIES ###
+cecho "YELLOW" "Checking required packages..."
+
+install_pkg() {
+    if ! command -v "$1" >/dev/null 2>&1; then
+        cecho "YELLOW" "Installing missing package: $1"
+        apt-get update -y && apt-get install -y "$2"
+    fi
+}
+
+install_pkg unzip unzip
+install_pkg wget wget
+install_pkg openssl openssl
+
+### CREATE ADVC USER ###
+if ! id "adventurecoin" >/dev/null 2>&1; then
+    cecho "YELLOW" "Creating adventurecoin user..."
+    adduser adventurecoin --system --group
+else
+    cecho "CYAN" "User already exists, continuing..."
+fi
 
 mkdir -p /usr/bin/adventurecoin.d
 cd /tmp
 
-### DOWNLOAD ADVENTURECOIN ###
-cecho "YELLOW" "Downloading AdventureCoin daemon..."
+### DOWNLOAD ADVC ###
+cecho "YELLOW" "Downloading AdventureCoin Daemon..."
 wget -q https://github.com/AdventureCoin-ADVC/AdventureCoin/releases/download/5.0.0.2-checkpoints/adventurecoin-x86_64-linux.zip
-sleep 3
 
-cecho "YELLOW" "Unzipping files..."
+cecho "YELLOW" "Unzipping..."
 unzip -oq adventurecoin-x86_64-linux.zip
 
-# FIXED PATH
-cd adventurecoin-x86_64-linux/depends/x86_64-unknown-linux-gnu/bin
+if [ ! -d depends/x86_64-unknown-linux-gnu/bin ]; then
+    cecho "RED" "ERROR: Binary folder not found. Stopping."
+    exit 1
+fi
 
-chmod +x adventurecoind
-chmod +x adventurecoin-cli
-
+cd depends/x86_64-unknown-linux-gnu/bin
+chmod +x adventurecoind adventurecoin-cli
 cp adventurecoind adventurecoin-cli /usr/bin/adventurecoin.d
 
 ln -sf /usr/bin/adventurecoin.d/adventurecoin-cli /usr/bin/adventurecoin-cli
 ln -sf /usr/bin/adventurecoin.d/adventurecoind /usr/bin/adventurecoind
 
 ### CONFIGURATION ###
-echo -n 'rpcpassword=' > adventurecoin.conf
-openssl rand -base64 41 >> adventurecoin.conf
+cecho "YELLOW" "Setting up AdventureCoin config..."
 
-cecho "YELLOW" "Setting up AdventureCoin directories..."
-sleep 2
+RPCPASS=$(openssl rand -base64 41)
 
-mkdir -p /root/.adventurecoin
-cp adventurecoin.conf /root/.adventurecoin
+mkdir -p /var/lib/adventurecoin
+cat <<EOF >/var/lib/adventurecoin/adventurecoin.conf
+rpcuser=advcuser
+rpcpassword=$RPCPASS
+maxconnections=24
+server=1
+daemon=1
+EOF
 
-# ensure /home/user exists
-if id "user" &>/dev/null; then
-    mkdir -p /home/user/.adventurecoin
-    cp adventurecoin.conf /home/user/.adventurecoin
-fi
+chown -R adventurecoin:adventurecoin /var/lib/adventurecoin
 
-mkdir -p /etc/adventurecoin
-echo 'maxconnections=24' >> adventurecoin.conf
-cp adventurecoin.conf /etc/adventurecoin/adventurecoin.conf
-chown adventurecoin:adventurecoin /etc/adventurecoin/adventurecoin.conf
+### RUNIT SERVICE (HiveOS) ###
+cecho "YELLOW" "Creating HiveOS runit service..."
 
-mkdir -p /var/lib/adventurecoind
-touch /var/lib/adventurecoind/adventurecoind.pid
-chown -R adventurecoin:adventurecoin /var/lib/adventurecoind
+mkdir -p /etc/service/adventurecoind
 
-### SYSTEMD CHECK ###
-if ! pidof systemd >/dev/null; then
-    cecho "RED" "System is NOT using systemd (Docker, LXC, WSL, etc.)"
-    cecho "RED" "Skipping systemd service creation."
-else
-    ### SYSTEMD SERVICE ###
-    cecho "YELLOW" "Downloading systemd service..."
-    cd /etc/systemd/system
-    wget -q https://raw.githubusercontent.com/AdventureCoin-ADVC/AdventureCoin/main/adventurecoind.service
+cat <<'EOF' >/etc/service/adventurecoind/run
+#!/bin/bash
+exec 2>&1
+exec chpst -u adventurecoin /usr/bin/adventurecoind -conf=/var/lib/adventurecoin/adventurecoin.conf -datadir=/var/lib/adventurecoin
+EOF
 
-    cecho "YELLOW" "Enabling service..."
-    systemctl daemon-reload
-    systemctl enable adventurecoind.service
-    systemctl start adventurecoind.service
-fi
+chmod +x /etc/service/adventurecoind/run
 
+### LOGGING ###
+mkdir -p /var/log/adventurecoind
+chmod 755 /var/log/adventurecoind
+
+cat <<'EOF' >/etc/service/adventurecoind/log/run
+#!/bin/bash
+exec svlogd -tt /var/log/adventurecoind
+EOF
+
+chmod +x /etc/service/adventurecoind/log/run
+
+### START SERVICE ###
+cecho "GREEN" "Starting AdventureCoin service..."
+sv restart adventurecoind || sv start adventurecoind
+
+sleep 1
 
 ### DONE ###
-cecho "GREEN" "AdventureCoin node installation complete!"
-sleep 1
-cecho "CYAN" "--------------------------------------"
-cecho "CYAN" "Open your firewall & forward port 38817"
-cecho "CYAN" "--------------------------------------"
+cecho "GREEN" "AdventureCoin Node installation complete!"
+cecho "CYAN"  "-------------------------------------------"
+cecho "CYAN"  "Open your firewall & forward port 38817"
+cecho "CYAN"  "-------------------------------------------"
 sleep .5
-
-# Use ip addr as fallback ifconfig is missing
-if command -v ifconfig >/dev/null 2>&1; then
-    ifconfig | grep -A 1 'wlan0'
-    ifconfig | grep -A 1 'eth0'
-else
-    ip -4 addr show | grep inet
-fi
-
+ifconfig | grep -A 1 'eth0'
 cecho "CYAN" "Use the IP listed above for port forwarding"
-sleep .5
-cecho "GREEN" "All finished. Enjoy your AdventureCoin node!"
+cecho "GREEN" "Node is now running under runit (HiveOS standard). Enjoy!"
