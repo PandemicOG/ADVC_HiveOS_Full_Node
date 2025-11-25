@@ -1,4 +1,4 @@
-# Raven_HiveOS_Full_Node
+# Adventurecoin_HiveOS_Full_Node
 
 Install script for HiveOS Linux to run Adventurecoin Full node with disabled wallet, with automatic restart at boot/reboot using systemd service.
 

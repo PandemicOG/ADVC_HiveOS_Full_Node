@@ -21,6 +21,13 @@ cecho "YELLOW" "     AdventureCoin Full Node Auto-Installer"
 cecho "YELLOW" "     (Adapted from the Ravenpool installer)"
 sleep 2
 
+### REQUIRE unzip ###
+if ! command -v unzip >/dev/null 2>&1; then
+    cecho "YELLOW" "Installing unzip..."
+    apt-get update -y
+    apt-get install -y unzip
+fi
+
 
 ### DISK CHECK ###
 cecho "YELLOW" "Checking available disk space..."
@@ -38,7 +45,7 @@ sleep 2
 ### CREATE ADVENTURECOIN USER ###
 cecho "YELLOW" "Creating adventurecoin user..."
 sleep 1
-adduser adventurecoin --system --group
+adduser adventurecoin --system --group || true
 
 mkdir -p /usr/bin/adventurecoin.d
 cd /tmp
@@ -50,9 +57,9 @@ sleep 3
 
 cecho "YELLOW" "Unzipping files..."
 unzip -oq adventurecoin-x86_64-linux.zip
-sleep 2
 
-cd depends/x86_64-unknown-linux-gnu/bin
+# FIXED PATH
+cd adventurecoin-x86_64-linux/depends/x86_64-unknown-linux-gnu/bin
 
 chmod +x adventurecoind
 chmod +x adventurecoin-cli
@@ -72,8 +79,11 @@ sleep 2
 mkdir -p /root/.adventurecoin
 cp adventurecoin.conf /root/.adventurecoin
 
-mkdir -p /home/user/.adventurecoin
-cp adventurecoin.conf /home/user/.adventurecoin
+# ensure /home/user exists
+if id "user" &>/dev/null; then
+    mkdir -p /home/user/.adventurecoin
+    cp adventurecoin.conf /home/user/.adventurecoin
+fi
 
 mkdir -p /etc/adventurecoin
 echo 'maxconnections=24' >> adventurecoin.conf
@@ -84,15 +94,22 @@ mkdir -p /var/lib/adventurecoind
 touch /var/lib/adventurecoind/adventurecoind.pid
 chown -R adventurecoin:adventurecoin /var/lib/adventurecoind
 
-### SYSTEMD SERVICE ###
-cecho "YELLOW" "Downloading systemd service..."
-cd /etc/systemd/system
-wget -q https://raw.githubusercontent.com/AdventureCoin-ADVC/AdventureCoin/main/adventurecoind.service   # UPDATE IF DIFFERENT
+### SYSTEMD CHECK ###
+if ! pidof systemd >/dev/null; then
+    cecho "RED" "System is NOT using systemd (Docker, LXC, WSL, etc.)"
+    cecho "RED" "Skipping systemd service creation."
+else
+    ### SYSTEMD SERVICE ###
+    cecho "YELLOW" "Downloading systemd service..."
+    cd /etc/systemd/system
+    wget -q https://raw.githubusercontent.com/AdventureCoin-ADVC/AdventureCoin/main/adventurecoind.service
 
-cecho "YELLOW" "Enabling service..."
-systemctl daemon-reload
-systemctl enable adventurecoind.service
-systemctl start adventurecoind.service
+    cecho "YELLOW" "Enabling service..."
+    systemctl daemon-reload
+    systemctl enable adventurecoind.service
+    systemctl start adventurecoind.service
+fi
+
 
 ### DONE ###
 cecho "GREEN" "AdventureCoin node installation complete!"
@@ -102,8 +119,13 @@ cecho "CYAN" "Open your firewall & forward port 38817"
 cecho "CYAN" "--------------------------------------"
 sleep .5
 
-ifconfig | grep -A 1 'wlan0'
-ifconfig | grep -A 1 'eth0'
+# Use ip addr as fallback ifconfig is missing
+if command -v ifconfig >/dev/null 2>&1; then
+    ifconfig | grep -A 1 'wlan0'
+    ifconfig | grep -A 1 'eth0'
+else
+    ip -4 addr show | grep inet
+fi
 
 cecho "CYAN" "Use the IP listed above for port forwarding"
 sleep .5
